@@ -19,13 +19,15 @@ import (
 	"net"
 	"strings"
 
+	frpIo "github.com/fatedier/golib/io"
+	"golang.org/x/time/rate"
+
 	"frp/pkg/config"
+	"frp/pkg/util/limit"
 	frpNet "frp/pkg/util/net"
 	"frp/pkg/util/util"
 	"frp/pkg/util/vhost"
 	"frp/server/metrics"
-
-	frpIo "github.com/fatedier/golib/io"
 )
 
 type HTTPProxy struct {
@@ -38,11 +40,12 @@ type HTTPProxy struct {
 func (pxy *HTTPProxy) Run() (remoteAddr string, err error) {
 	xl := pxy.xl
 	routeConfig := vhost.RouteConfig{
-		RewriteHost:  pxy.cfg.HostHeaderRewrite,
-		Headers:      pxy.cfg.Headers,
-		Username:     pxy.cfg.HTTPUser,
-		Password:     pxy.cfg.HTTPPwd,
-		CreateConnFn: pxy.GetRealConn,
+		RewriteHost:     pxy.cfg.HostHeaderRewrite,
+		RouteByHTTPUser: pxy.cfg.RouteByHTTPUser,
+		Headers:         pxy.cfg.Headers,
+		Username:        pxy.cfg.HTTPUser,
+		Password:        pxy.cfg.HTTPPwd,
+		CreateConnFn:    pxy.GetRealConn,
 	}
 
 	locations := pxy.cfg.Locations
@@ -65,8 +68,8 @@ func (pxy *HTTPProxy) Run() (remoteAddr string, err error) {
 		routeConfig.Domain = domain
 		for _, location := range locations {
 			routeConfig.Location = location
-			tmpDomain := routeConfig.Domain
-			tmpLocation := routeConfig.Location
+
+			tmpRouteConfig := routeConfig
 
 			// handle group
 			if pxy.cfg.Group != "" {
@@ -76,7 +79,7 @@ func (pxy *HTTPProxy) Run() (remoteAddr string, err error) {
 				}
 
 				pxy.closeFuncs = append(pxy.closeFuncs, func() {
-					pxy.rc.HTTPGroupCtl.UnRegister(pxy.name, pxy.cfg.Group, tmpDomain, tmpLocation)
+					pxy.rc.HTTPGroupCtl.UnRegister(pxy.name, pxy.cfg.Group, tmpRouteConfig)
 				})
 			} else {
 				// no group
@@ -85,11 +88,12 @@ func (pxy *HTTPProxy) Run() (remoteAddr string, err error) {
 					return
 				}
 				pxy.closeFuncs = append(pxy.closeFuncs, func() {
-					pxy.rc.HTTPReverseProxy.UnRegister(tmpDomain, tmpLocation)
+					pxy.rc.HTTPReverseProxy.UnRegister(tmpRouteConfig)
 				})
 			}
-			addrs = append(addrs, util.CanonicalAddr(routeConfig.Domain, int(pxy.serverCfg.VhostHTTPPort)))
-			xl.Info("http proxy listen for host [%s] location [%s] group [%s]", routeConfig.Domain, routeConfig.Location, pxy.cfg.Group)
+			addrs = append(addrs, util.CanonicalAddr(routeConfig.Domain, pxy.serverCfg.VhostHTTPPort))
+			xl.Info("http proxy listen for host [%s] location [%s] group [%s], routeByHTTPUser [%s]",
+				routeConfig.Domain, routeConfig.Location, pxy.cfg.Group, pxy.cfg.RouteByHTTPUser)
 		}
 	}
 
@@ -97,8 +101,8 @@ func (pxy *HTTPProxy) Run() (remoteAddr string, err error) {
 		routeConfig.Domain = pxy.cfg.SubDomain + "." + pxy.serverCfg.SubDomainHost
 		for _, location := range locations {
 			routeConfig.Location = location
-			tmpDomain := routeConfig.Domain
-			tmpLocation := routeConfig.Location
+
+			tmpRouteConfig := routeConfig
 
 			// handle group
 			if pxy.cfg.Group != "" {
@@ -108,7 +112,7 @@ func (pxy *HTTPProxy) Run() (remoteAddr string, err error) {
 				}
 
 				pxy.closeFuncs = append(pxy.closeFuncs, func() {
-					pxy.rc.HTTPGroupCtl.UnRegister(pxy.name, pxy.cfg.Group, tmpDomain, tmpLocation)
+					pxy.rc.HTTPGroupCtl.UnRegister(pxy.name, pxy.cfg.Group, tmpRouteConfig)
 				})
 			} else {
 				err = pxy.rc.HTTPReverseProxy.Register(routeConfig)
@@ -116,12 +120,13 @@ func (pxy *HTTPProxy) Run() (remoteAddr string, err error) {
 					return
 				}
 				pxy.closeFuncs = append(pxy.closeFuncs, func() {
-					pxy.rc.HTTPReverseProxy.UnRegister(tmpDomain, tmpLocation)
+					pxy.rc.HTTPReverseProxy.UnRegister(tmpRouteConfig)
 				})
 			}
-			addrs = append(addrs, util.CanonicalAddr(tmpDomain, pxy.serverCfg.VhostHTTPPort))
+			addrs = append(addrs, util.CanonicalAddr(tmpRouteConfig.Domain, pxy.serverCfg.VhostHTTPPort))
 
-			xl.Info("http proxy listen for host [%s] location [%s] group [%s]", routeConfig.Domain, routeConfig.Location, pxy.cfg.Group)
+			xl.Info("http proxy listen for host [%s] location [%s] group [%s], routeByHTTPUser [%s]",
+				routeConfig.Domain, routeConfig.Location, pxy.cfg.Group, pxy.cfg.RouteByHTTPUser)
 		}
 	}
 	remoteAddr = strings.Join(addrs, ",")
@@ -130,6 +135,10 @@ func (pxy *HTTPProxy) Run() (remoteAddr string, err error) {
 
 func (pxy *HTTPProxy) GetConf() config.ProxyConf {
 	return pxy.cfg
+}
+
+func (pxy *HTTPProxy) GetLimiter() *rate.Limiter {
+	return pxy.limiter
 }
 
 func (pxy *HTTPProxy) GetRealConn(remoteAddr string) (workConn net.Conn, err error) {
@@ -157,6 +166,13 @@ func (pxy *HTTPProxy) GetRealConn(remoteAddr string) (workConn net.Conn, err err
 	if pxy.cfg.UseCompression {
 		rwc = frpIo.WithCompression(rwc)
 	}
+
+	if pxy.GetLimiter() != nil {
+		rwc = frpIo.WrapReadWriteCloser(limit.NewReader(rwc, pxy.GetLimiter()), limit.NewWriter(rwc, pxy.GetLimiter()), func() error {
+			return rwc.Close()
+		})
+	}
+
 	workConn = frpNet.WrapReadWriteCloserToConn(rwc, tmpConn)
 	workConn = frpNet.WrapStatsConn(workConn, pxy.updateStatsAfterClosedConn)
 	metrics.Server.OpenConnection(pxy.GetName(), pxy.GetConf().GetBaseInfo().ProxyType)

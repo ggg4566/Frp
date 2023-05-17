@@ -17,10 +17,11 @@ package proxy
 import (
 	"fmt"
 
+	"github.com/fatedier/golib/errors"
+	"golang.org/x/time/rate"
+
 	"frp/pkg/config"
 	"frp/pkg/msg"
-
-	"github.com/fatedier/golib/errors"
 )
 
 type XTCPProxy struct {
@@ -86,6 +87,10 @@ func (pxy *XTCPProxy) Run() (remoteAddr string, err error) {
 
 func (pxy *XTCPProxy) GetConf() config.ProxyConf {
 	return pxy.cfg
+}
+
+func (pxy *XTCPProxy) GetLimiter() *rate.Limiter {
+	return pxy.limiter
 }
 
 func (pxy *XTCPProxy) Close() {

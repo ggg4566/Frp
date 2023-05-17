@@ -1,9 +1,9 @@
 package prometheus
 
 import (
-	"frp/server/metrics"
-
 	"github.com/prometheus/client_golang/prometheus"
+
+	"frp/server/metrics"
 )
 
 const (

@@ -19,9 +19,9 @@ import (
 	"log"
 	"net"
 
-	frpNet "frp/pkg/util/net"
-
 	gosocks5 "github.com/armon/go-socks5"
+
+	frpNet "frp/pkg/util/net"
 )
 
 const PluginSocks5 = "socks5"
@@ -32,9 +32,6 @@ func init() {
 
 type Socks5Plugin struct {
 	Server *gosocks5.Server
-
-	user   string
-	passwd string
 }
 
 func NewSocks5Plugin(params map[string]string) (p Plugin, err error) {

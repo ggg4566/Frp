@@ -23,15 +23,17 @@ import (
 	"sync"
 	"time"
 
+	frpIo "github.com/fatedier/golib/io"
+	"golang.org/x/time/rate"
+
 	"frp/pkg/config"
 	"frp/pkg/msg"
 	plugin "frp/pkg/plugin/server"
+	"frp/pkg/util/limit"
 	frpNet "frp/pkg/util/net"
 	"frp/pkg/util/xlog"
 	"frp/server/controller"
 	"frp/server/metrics"
-
-	frpIo "github.com/fatedier/golib/io"
 )
 
 type GetWorkConnFn func() (net.Conn, error)
@@ -45,6 +47,8 @@ type Proxy interface {
 	GetUsedPortsNum() int
 	GetResourceController() *controller.ResourceController
 	GetUserInfo() plugin.UserInfo
+	GetLimiter() *rate.Limiter
+	GetLoginMsg() *msg.Login
 	Close()
 }
 
@@ -56,7 +60,9 @@ type BaseProxy struct {
 	poolCount     int
 	getWorkConnFn GetWorkConnFn
 	serverCfg     config.ServerCommonConf
+	limiter       *rate.Limiter
 	userInfo      plugin.UserInfo
+	loginMsg      *msg.Login
 
 	mu  sync.RWMutex
 	xl  *xlog.Logger
@@ -81,6 +87,10 @@ func (pxy *BaseProxy) GetResourceController() *controller.ResourceController {
 
 func (pxy *BaseProxy) GetUserInfo() plugin.UserInfo {
 	return pxy.userInfo
+}
+
+func (pxy *BaseProxy) GetLoginMsg() *msg.Login {
+	return pxy.loginMsg
 }
 
 func (pxy *BaseProxy) Close() {
@@ -184,9 +194,16 @@ func (pxy *BaseProxy) startListenHandler(p Proxy, handler func(Proxy, net.Conn, 
 }
 
 func NewProxy(ctx context.Context, userInfo plugin.UserInfo, rc *controller.ResourceController, poolCount int,
-	getWorkConnFn GetWorkConnFn, pxyConf config.ProxyConf, serverCfg config.ServerCommonConf) (pxy Proxy, err error) {
-
+	getWorkConnFn GetWorkConnFn, pxyConf config.ProxyConf, serverCfg config.ServerCommonConf, loginMsg *msg.Login,
+) (pxy Proxy, err error) {
 	xl := xlog.FromContextSafe(ctx).Spawn().AppendPrefix(pxyConf.GetBaseInfo().ProxyName)
+
+	var limiter *rate.Limiter
+	limitBytes := pxyConf.GetBaseInfo().BandwidthLimit.Bytes()
+	if limitBytes > 0 && pxyConf.GetBaseInfo().BandwidthLimitMode == config.BandwidthLimitModeServer {
+		limiter = rate.NewLimiter(rate.Limit(float64(limitBytes)), int(limitBytes))
+	}
+
 	basePxy := BaseProxy{
 		name:          pxyConf.GetBaseInfo().ProxyName,
 		rc:            rc,
@@ -194,9 +211,11 @@ func NewProxy(ctx context.Context, userInfo plugin.UserInfo, rc *controller.Reso
 		poolCount:     poolCount,
 		getWorkConnFn: getWorkConnFn,
 		serverCfg:     serverCfg,
+		limiter:       limiter,
 		xl:            xl,
 		ctx:           xlog.NewContext(ctx, xl),
 		userInfo:      userInfo,
+		loginMsg:      loginMsg,
 	}
 	switch cfg := pxyConf.(type) {
 	case *config.TCPProxyConf:
@@ -287,13 +306,20 @@ func HandleUserTCPConnection(pxy Proxy, userConn net.Conn, serverCfg config.Serv
 	if cfg.UseCompression {
 		local = frpIo.WithCompression(local)
 	}
+
+	if pxy.GetLimiter() != nil {
+		local = frpIo.WrapReadWriteCloser(limit.NewReader(local, pxy.GetLimiter()), limit.NewWriter(local, pxy.GetLimiter()), func() error {
+			return local.Close()
+		})
+	}
+
 	xl.Debug("join connections, workConn(l[%s] r[%s]) userConn(l[%s] r[%s])", workConn.LocalAddr().String(),
 		workConn.RemoteAddr().String(), userConn.LocalAddr().String(), userConn.RemoteAddr().String())
 
 	name := pxy.GetName()
 	proxyType := pxy.GetConf().GetBaseInfo().ProxyType
 	metrics.Server.OpenConnection(name, proxyType)
-	inCount, outCount := frpIo.Join(local, userConn)
+	inCount, outCount, _ := frpIo.Join(local, userConn)
 	metrics.Server.CloseConnection(name, proxyType)
 	metrics.Server.AddTrafficIn(name, proxyType, inCount)
 	metrics.Server.AddTrafficOut(name, proxyType, outCount)

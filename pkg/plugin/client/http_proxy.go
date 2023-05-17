@@ -22,10 +22,10 @@ import (
 	"net/http"
 	"strings"
 
-	frpNet "frp/pkg/util/net"
-
 	frpIo "github.com/fatedier/golib/io"
 	gnet "github.com/fatedier/golib/net"
+
+	frpNet "frp/pkg/util/net"
 )
 
 const PluginHTTPProxy = "http_proxy"
@@ -87,7 +87,6 @@ func (hp *HTTPProxy) Handle(conn io.ReadWriteCloser, realConn net.Conn, extraBuf
 	}
 
 	hp.l.PutConn(sc)
-	return
 }
 
 func (hp *HTTPProxy) Close() error {
@@ -189,6 +188,9 @@ func (hp *HTTPProxy) handleConnectReq(req *http.Request, rwc io.ReadWriteCloser)
 	if ok := hp.Auth(req); !ok {
 		res := getBadResponse()
 		res.Write(rwc)
+		if res.Body != nil {
+			res.Body.Close()
+		}
 		return
 	}
 

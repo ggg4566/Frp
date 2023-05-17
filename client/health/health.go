@@ -26,9 +26,7 @@ import (
 	"frp/pkg/util/xlog"
 )
 
-var (
-	ErrHealthCheckType = errors.New("error health check type")
-)
+var ErrHealthCheckType = errors.New("error health check type")
 
 type Monitor struct {
 	checkType      string
@@ -152,7 +150,7 @@ func (monitor *Monitor) doTCPCheck(ctx context.Context) error {
 }
 
 func (monitor *Monitor) doHTTPCheck(ctx context.Context) error {
-	req, err := http.NewRequest("GET", monitor.url, nil)
+	req, err := http.NewRequestWithContext(ctx, "GET", monitor.url, nil)
 	if err != nil {
 		return err
 	}

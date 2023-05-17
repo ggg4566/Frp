@@ -55,7 +55,7 @@ func NewFakeUDPConn(l *UDPListener, laddr, raddr net.Addr) *FakeUDPConn {
 		for {
 			time.Sleep(5 * time.Second)
 			fc.mu.RLock()
-			if time.Now().Sub(fc.lastActive) > 10*time.Second {
+			if time.Since(fc.lastActive) > 10*time.Second {
 				fc.mu.RUnlock()
 				fc.Close()
 				break
@@ -68,8 +68,7 @@ func NewFakeUDPConn(l *UDPListener, laddr, raddr net.Addr) *FakeUDPConn {
 
 func (c *FakeUDPConn) putPacket(content []byte) {
 	defer func() {
-		if err := recover(); err != nil {
-		}
+		recover()
 	}()
 
 	select {

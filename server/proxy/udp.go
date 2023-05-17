@@ -22,14 +22,16 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/fatedier/golib/errors"
+	frpIo "github.com/fatedier/golib/io"
+	"golang.org/x/time/rate"
+
 	"frp/pkg/config"
 	"frp/pkg/msg"
 	"frp/pkg/proto/udp"
+	"frp/pkg/util/limit"
 	frpNet "frp/pkg/util/net"
 	"frp/server/metrics"
-
-	"github.com/fatedier/golib/errors"
-	frpIo "github.com/fatedier/golib/io"
 )
 
 type UDPProxy struct {
@@ -109,7 +111,9 @@ func (pxy *UDPProxy) Run() (remoteAddr string, err error) {
 				})
 				return
 			}
-			conn.SetReadDeadline(time.Time{})
+			if err := conn.SetReadDeadline(time.Time{}); err != nil {
+				xl.Warn("set read deadline error: %v", err)
+			}
 			switch m := rawMsg.(type) {
 			case *msg.Ping:
 				xl.Trace("udp work conn get ping message")
@@ -196,6 +200,12 @@ func (pxy *UDPProxy) Run() (remoteAddr string, err error) {
 				rwc = frpIo.WithCompression(rwc)
 			}
 
+			if pxy.GetLimiter() != nil {
+				rwc = frpIo.WrapReadWriteCloser(limit.NewReader(rwc, pxy.GetLimiter()), limit.NewWriter(rwc, pxy.GetLimiter()), func() error {
+					return rwc.Close()
+				})
+			}
+
 			pxy.workConn = frpNet.WrapReadWriteCloserToConn(rwc, workConn)
 			ctx, cancel := context.WithCancel(context.Background())
 			go workConnReaderFn(pxy.workConn)
@@ -221,6 +231,10 @@ func (pxy *UDPProxy) Run() (remoteAddr string, err error) {
 
 func (pxy *UDPProxy) GetConf() config.ProxyConf {
 	return pxy.cfg
+}
+
+func (pxy *UDPProxy) GetLimiter() *rate.Limiter {
+	return pxy.limiter
 }
 
 func (pxy *UDPProxy) Close() {

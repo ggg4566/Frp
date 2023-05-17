@@ -17,6 +17,8 @@ package proxy
 import (
 	"strings"
 
+	"golang.org/x/time/rate"
+
 	"frp/pkg/config"
 	"frp/pkg/util/util"
 	"frp/pkg/util/vhost"
@@ -62,7 +64,7 @@ func (pxy *HTTPSProxy) Run() (remoteAddr string, err error) {
 		}
 		xl.Info("https proxy listen for host [%s]", routeConfig.Domain)
 		pxy.listeners = append(pxy.listeners, l)
-		addrs = append(addrs, util.CanonicalAddr(routeConfig.Domain, int(pxy.serverCfg.VhostHTTPSPort)))
+		addrs = append(addrs, util.CanonicalAddr(routeConfig.Domain, pxy.serverCfg.VhostHTTPSPort))
 	}
 
 	pxy.startListenHandler(pxy, HandleUserTCPConnection)
@@ -72,6 +74,10 @@ func (pxy *HTTPSProxy) Run() (remoteAddr string, err error) {
 
 func (pxy *HTTPSProxy) GetConf() config.ProxyConf {
 	return pxy.cfg
+}
+
+func (pxy *HTTPSProxy) GetLimiter() *rate.Limiter {
+	return pxy.limiter
 }
 
 func (pxy *HTTPSProxy) Close() {

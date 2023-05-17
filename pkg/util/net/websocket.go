@@ -18,8 +18,7 @@ type WebsocketListener struct {
 	ln       net.Listener
 	acceptCh chan net.Conn
 
-	server    *http.Server
-	httpMutex *http.ServeMux
+	server *http.Server
 }
 
 // NewWebsocketListener to handle websocket connections

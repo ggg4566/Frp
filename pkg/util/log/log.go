@@ -40,7 +40,7 @@ func SetLogFile(logWay string, logFile string, maxdays int64, disableLogColor bo
 	if logWay == "console" {
 		params := ""
 		if disableLogColor {
-			params = fmt.Sprintf(`{"color": false}`)
+			params = `{"color": false}`
 		}
 		Log.SetLogger("console", params)
 	} else {
@@ -52,7 +52,7 @@ func SetLogFile(logWay string, logFile string, maxdays int64, disableLogColor bo
 // SetLogLevel set log level, default is warning
 // value: error, warning, info, debug, trace
 func SetLogLevel(logLevel string) {
-	level := 4 // warning
+	var level int
 	switch logLevel {
 	case "error":
 		level = 3
@@ -65,7 +65,7 @@ func SetLogLevel(logLevel string) {
 	case "trace":
 		level = 8
 	default:
-		level = 4
+		level = 4 // warning
 	}
 	Log.SetLevel(level)
 }

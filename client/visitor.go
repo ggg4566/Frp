@@ -37,7 +37,7 @@ import (
 	fmux "github.com/hashicorp/yamux"
 )
 
-// Visitor is used for forward traffics from local port tot remote service.
+// Visitor is used for forward traffics from local port to remote service.
 type Visitor interface {
 	Run() error
 	Close()
@@ -71,9 +71,8 @@ func NewVisitor(ctx context.Context, ctl *Control, cfg config.VisitorConf) (visi
 }
 
 type BaseVisitor struct {
-	ctl    *Control
-	l      net.Listener
-	closed bool
+	ctl *Control
+	l   net.Listener
 
 	mu  sync.RWMutex
 	ctx context.Context
@@ -211,8 +210,12 @@ func (sv *XTCPVisitor) handleConn(userConn net.Conn) {
 		return
 	}
 
+	serverAddr := sv.ctl.clientCfg.NatHoleServerAddr
+	if serverAddr == "" {
+		serverAddr = sv.ctl.clientCfg.ServerAddr
+	}
 	raddr, err := net.ResolveUDPAddr("udp",
-		fmt.Sprintf("%s:%d", sv.ctl.clientCfg.ServerAddr, sv.ctl.serverUDPPort))
+		net.JoinHostPort(serverAddr, strconv.Itoa(sv.ctl.serverUDPPort)))
 	if err != nil {
 		xl.Error("resolve server UDP addr error")
 		return
@@ -279,7 +282,10 @@ func (sv *XTCPVisitor) handleConn(userConn net.Conn) {
 	}
 	defer lConn.Close()
 
-	lConn.Write([]byte(natHoleRespMsg.Sid))
+	if _, err := lConn.Write([]byte(natHoleRespMsg.Sid)); err != nil {
+		xl.Error("write sid error: %v", err)
+		return
+	}
 
 	// read ack sid from client
 	sidBuf := pool.GetBuf(1024)
@@ -333,8 +339,11 @@ func (sv *XTCPVisitor) handleConn(userConn net.Conn) {
 		muxConnRWCloser = frpIo.WithCompression(muxConnRWCloser)
 	}
 
-	frpIo.Join(userConn, muxConnRWCloser)
+	_, _, errs := frpIo.Join(userConn, muxConnRWCloser)
 	xl.Debug("join connections closed")
+	if len(errs) > 0 {
+		xl.Trace("join connections errors: %v", errs)
+	}
 }
 
 type SUDPVisitor struct {
@@ -411,7 +420,6 @@ func (sv *SUDPVisitor) dispatcher() {
 		default:
 		}
 	}
-
 }
 
 func (sv *SUDPVisitor) worker(workConn net.Conn, firstPacket *msg.UDPPacket) {

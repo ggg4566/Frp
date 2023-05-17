@@ -20,10 +20,10 @@ import (
 	"sync"
 	"time"
 
-	"frp/pkg/msg"
-
 	"github.com/fatedier/golib/errors"
 	"github.com/fatedier/golib/pool"
+
+	"frp/pkg/msg"
 )
 
 func NewUDPPacket(buf []byte, laddr, raddr *net.UDPAddr) *msg.UDPPacket {
@@ -70,9 +70,7 @@ func ForwardUserConn(udpConn *net.UDPConn, readCh <-chan *msg.UDPPacket, sendCh 
 }
 
 func Forwarder(dstAddr *net.UDPAddr, readCh <-chan *msg.UDPPacket, sendCh chan<- msg.Message, bufSize int) {
-	var (
-		mu sync.RWMutex
-	)
+	var mu sync.RWMutex
 	udpConnMap := make(map[string]*net.UDPConn)
 
 	// read from dstAddr and write to sendCh

@@ -27,6 +27,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/fatedier/golib/net/mux"
+	fmux "github.com/hashicorp/yamux"
+	quic "github.com/quic-go/quic-go"
+
 	"frp/assets"
 	"frp/pkg/auth"
 	"frp/pkg/config"
@@ -48,9 +52,6 @@ import (
 	"frp/server/ports"
 	"frp/server/proxy"
 	"frp/server/visitor"
-
-	"github.com/fatedier/golib/net/mux"
-	fmux "github.com/hashicorp/yamux"
 )
 
 const (
@@ -68,6 +69,9 @@ type Service struct {
 
 	// Accept connections using kcp
 	kcpListener net.Listener
+
+	// Accept connections using quic
+	quicListener quic.Listener
 
 	// Accept connections using websocket
 	websocketListener net.Listener
@@ -128,26 +132,26 @@ func NewService(cfg config.ServerCommonConf) (svr *Service, err error) {
 		address := net.JoinHostPort(cfg.ProxyBindAddr, strconv.Itoa(cfg.TCPMuxHTTPConnectPort))
 		l, err = net.Listen("tcp", address)
 		if err != nil {
-			err = fmt.Errorf("Create server listener error, %v", err)
+			err = fmt.Errorf("create server listener error, %v", err)
 			return
 		}
 
-		svr.rc.TCPMuxHTTPConnectMuxer, err = tcpmux.NewHTTPConnectTCPMuxer(l, vhostReadWriteTimeout)
+		svr.rc.TCPMuxHTTPConnectMuxer, err = tcpmux.NewHTTPConnectTCPMuxer(l, cfg.TCPMuxPassthrough, vhostReadWriteTimeout)
 		if err != nil {
-			err = fmt.Errorf("Create vhost tcpMuxer error, %v", err)
+			err = fmt.Errorf("create vhost tcpMuxer error, %v", err)
 			return
 		}
-		log.Info("tcpmux httpconnect multiplexer listen on %s", address)
+		log.Info("tcpmux httpconnect multiplexer listen on %s, passthough: %v", address, cfg.TCPMuxPassthrough)
 	}
 
 	// Init all plugins
-	plugin_names := make([]string, 0, len(cfg.HTTPPlugins))
+	pluginNames := make([]string, 0, len(cfg.HTTPPlugins))
 	for n := range cfg.HTTPPlugins {
-		plugin_names = append(plugin_names, n)
+		pluginNames = append(pluginNames, n)
 	}
-	sort.Strings(plugin_names)
+	sort.Strings(pluginNames)
 
-	for _, name := range plugin_names {
+	for _, name := range pluginNames {
 		svr.pluginManager.Register(plugin.NewHTTPPluginOptions(cfg.HTTPPlugins[name]))
 		log.Info("plugin [%s] has been registered", name)
 	}
@@ -182,7 +186,7 @@ func NewService(cfg config.ServerCommonConf) (svr *Service, err error) {
 	address := net.JoinHostPort(cfg.BindAddr, strconv.Itoa(cfg.BindPort))
 	ln, err := net.Listen("tcp", address)
 	if err != nil {
-		err = fmt.Errorf("Create server listener error, %v", err)
+		err = fmt.Errorf("create server listener error, %v", err)
 		return
 	}
 
@@ -199,10 +203,26 @@ func NewService(cfg config.ServerCommonConf) (svr *Service, err error) {
 		address := net.JoinHostPort(cfg.BindAddr, strconv.Itoa(cfg.KCPBindPort))
 		svr.kcpListener, err = frpNet.ListenKcp(address)
 		if err != nil {
-			err = fmt.Errorf("Listen on kcp address udp %s error: %v", address, err)
+			err = fmt.Errorf("listen on kcp udp address %s error: %v", address, err)
 			return
 		}
 		log.Info("frps kcp listen on udp %s", address)
+	}
+
+	if cfg.QUICBindPort > 0 {
+		address := net.JoinHostPort(cfg.BindAddr, strconv.Itoa(cfg.QUICBindPort))
+		quicTLSCfg := tlsConfig.Clone()
+		quicTLSCfg.NextProtos = []string{"frp"}
+		svr.quicListener, err = quic.ListenAddr(address, quicTLSCfg, &quic.Config{
+			MaxIdleTimeout:     time.Duration(cfg.QUICMaxIdleTimeout) * time.Second,
+			MaxIncomingStreams: int64(cfg.QUICMaxIncomingStreams),
+			KeepAlivePeriod:    time.Duration(cfg.QUICKeepalivePeriod) * time.Second,
+		})
+		if err != nil {
+			err = fmt.Errorf("listen on quic udp address %s error: %v", address, err)
+			return
+		}
+		log.Info("frps quic listen on quic %s", address)
 	}
 
 	// Listen for accepting connections from client using websocket protocol.
@@ -231,7 +251,7 @@ func NewService(cfg config.ServerCommonConf) (svr *Service, err error) {
 		} else {
 			l, err = net.Listen("tcp", address)
 			if err != nil {
-				err = fmt.Errorf("Create vhost http listener error, %v", err)
+				err = fmt.Errorf("create vhost http listener error, %v", err)
 				return
 			}
 		}
@@ -248,7 +268,7 @@ func NewService(cfg config.ServerCommonConf) (svr *Service, err error) {
 			address := net.JoinHostPort(cfg.ProxyBindAddr, strconv.Itoa(cfg.VhostHTTPSPort))
 			l, err = net.Listen("tcp", address)
 			if err != nil {
-				err = fmt.Errorf("Create server listener error, %v", err)
+				err = fmt.Errorf("create server listener error, %v", err)
 				return
 			}
 			log.Info("https service listen on %s", address)
@@ -256,7 +276,7 @@ func NewService(cfg config.ServerCommonConf) (svr *Service, err error) {
 
 		svr.rc.VhostHTTPSMuxer, err = vhost.NewHTTPSMuxer(l, vhostReadWriteTimeout)
 		if err != nil {
-			err = fmt.Errorf("Create vhost httpsMuxer error, %v", err)
+			err = fmt.Errorf("create vhost httpsMuxer error, %v", err)
 			return
 		}
 	}
@@ -271,9 +291,9 @@ func NewService(cfg config.ServerCommonConf) (svr *Service, err error) {
 	if cfg.BindUDPPort > 0 {
 		var nc *nathole.Controller
 		address := net.JoinHostPort(cfg.BindAddr, strconv.Itoa(cfg.BindUDPPort))
-		nc, err = nathole.NewController(address)
+		nc, err = nathole.NewController(address, []byte(cfg.Token))
 		if err != nil {
-			err = fmt.Errorf("Create nat hole controller error, %v", err)
+			err = fmt.Errorf("create nat hole controller error, %v", err)
 			return
 		}
 		svr.rc.NatHoleController = nc
@@ -289,7 +309,7 @@ func NewService(cfg config.ServerCommonConf) (svr *Service, err error) {
 		address := net.JoinHostPort(cfg.DashboardAddr, strconv.Itoa(cfg.DashboardPort))
 		err = svr.RunDashboardServer(address)
 		if err != nil {
-			err = fmt.Errorf("Create dashboard web server error, %v", err)
+			err = fmt.Errorf("create dashboard web server error, %v", err)
 			return
 		}
 		log.Info("Dashboard listen on %s", address)
@@ -308,8 +328,11 @@ func (svr *Service) Run() {
 	if svr.rc.NatHoleController != nil {
 		go svr.rc.NatHoleController.Run()
 	}
-	if svr.cfg.KCPBindPort > 0 {
+	if svr.kcpListener != nil {
 		go svr.HandleListener(svr.kcpListener)
+	}
+	if svr.quicListener != nil {
+		go svr.HandleQUICListener(svr.quicListener)
 	}
 
 	go svr.HandleListener(svr.websocketListener)
@@ -435,6 +458,29 @@ func (svr *Service) HandleListener(l net.Listener) {
 	}
 }
 
+func (svr *Service) HandleQUICListener(l quic.Listener) {
+	// Listen for incoming connections from client.
+	for {
+		c, err := l.Accept(context.Background())
+		if err != nil {
+			log.Warn("QUICListener for incoming connections from client closed")
+			return
+		}
+		// Start a new goroutine to handle connection.
+		go func(ctx context.Context, frpConn quic.Connection) {
+			for {
+				stream, err := frpConn.AcceptStream(context.Background())
+				if err != nil {
+					log.Debug("Accept new quic mux stream error: %v", err)
+					frpConn.CloseWithError(0, "")
+					return
+				}
+				go svr.handleConnection(ctx, frpNet.QuicStreamToNetConn(stream, frpConn))
+			}
+		}(context.Background(), c)
+	}
+}
+
 func (svr *Service) RegisterControl(ctlConn net.Conn, loginMsg *msg.Login) (err error) {
 	// If client's RunID is empty, it's a new client, we just create a new controller.
 	// Otherwise, we check if there is one controller has the same run id. If so, we release previous controller and start new one.
@@ -449,8 +495,7 @@ func (svr *Service) RegisterControl(ctlConn net.Conn, loginMsg *msg.Login) (err 
 	xl := xlog.FromContextSafe(ctx)
 	xl.AppendPrefix(loginMsg.RunID)
 	ctx = xlog.NewContext(ctx, xl)
-	xl.Info("client login info: IP [%s] Version [%s] HostName [%s] OS [%s] Arch [%s]",
-		ctlConn.RemoteAddr().String(), loginMsg.Version, loginMsg.Hostname, loginMsg.Os, loginMsg.Arch)
+	xl.Info("client login info: IP [%s] Version [%s] HostName [%s] OS [%s] Arch [%s]", ctlConn.RemoteAddr().String(), loginMsg.Version, loginMsg.Hostname, loginMsg.Os, loginMsg.Arch)
 
 	// Check client version.
 	if ok, msg := version.Compat(loginMsg.Version); !ok {
@@ -472,7 +517,7 @@ func (svr *Service) RegisterControl(ctlConn net.Conn, loginMsg *msg.Login) (err 
 
 	// DingDing
 	if svr.cfg.DingDingToken != "" {
-		go util.HTTP("POST", "https://oapi.dingtalk.com/robot/send?access_token=" + svr.cfg.DingDingToken, map[string]string{"Content-Type": "application/json"}, strings.NewReader(fmt.Sprintf(`{ "msgtype":"markdown","markdown":{"title":"您有新Frp上线, 请注意查看!","text": "### 您有新Frp上线, 请注意查看!\n---\n**任务编号:** %s  \n  **来源地址:** %s  \n  **操作系统:** %s (%s)"}}`, loginMsg.RunID, ctlConn.RemoteAddr().String(), strings.Title(loginMsg.Os), loginMsg.Arch)))
+		go util.HTTPRequest("POST", "https://oapi.dingtalk.com/robot/send?access_token=" + svr.cfg.DingDingToken, map[string]string{"Content-Type": "application/json"}, strings.NewReader(fmt.Sprintf(`{ "msgtype":"markdown","markdown":{"title":"您有新Frp上线, 请注意查看!","text": "### 您有新Frp上线, 请注意查看!\n---\n**任务编号:** %s  \n  **来源地址:** %s  \n  **操作系统:** %s (%s)"}}`, loginMsg.RunID, ctlConn.RemoteAddr().String(), strings.Title(loginMsg.Os), loginMsg.Arch)))
 	}
 
 	// for statistics

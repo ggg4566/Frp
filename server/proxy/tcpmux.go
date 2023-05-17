@@ -19,6 +19,8 @@ import (
 	"net"
 	"strings"
 
+	"golang.org/x/time/rate"
+
 	"frp/pkg/config"
 	"frp/pkg/consts"
 	"frp/pkg/util/util"
@@ -30,20 +32,27 @@ type TCPMuxProxy struct {
 	cfg *config.TCPMuxProxyConf
 }
 
-func (pxy *TCPMuxProxy) httpConnectListen(domain string, addrs []string) (_ []string, err error) {
+func (pxy *TCPMuxProxy) httpConnectListen(
+	domain, routeByHTTPUser, httpUser, httpPwd string, addrs []string) ([]string, error,
+) {
 	var l net.Listener
+	var err error
+	routeConfig := &vhost.RouteConfig{
+		Domain:          domain,
+		RouteByHTTPUser: routeByHTTPUser,
+		Username:        httpUser,
+		Password:        httpPwd,
+	}
 	if pxy.cfg.Group != "" {
-		l, err = pxy.rc.TCPMuxGroupCtl.Listen(pxy.ctx, pxy.cfg.Multiplexer, pxy.cfg.Group, pxy.cfg.GroupKey, domain)
+		l, err = pxy.rc.TCPMuxGroupCtl.Listen(pxy.ctx, pxy.cfg.Multiplexer, pxy.cfg.Group, pxy.cfg.GroupKey, *routeConfig)
 	} else {
-		routeConfig := &vhost.RouteConfig{
-			Domain: domain,
-		}
 		l, err = pxy.rc.TCPMuxHTTPConnectMuxer.Listen(pxy.ctx, routeConfig)
 	}
 	if err != nil {
 		return nil, err
 	}
-	pxy.xl.Info("tcpmux httpconnect multiplexer listens for host [%s]", domain)
+	pxy.xl.Info("tcpmux httpconnect multiplexer listens for host [%s], group [%s] routeByHTTPUser [%s]",
+		domain, pxy.cfg.Group, pxy.cfg.RouteByHTTPUser)
 	pxy.listeners = append(pxy.listeners, l)
 	return append(addrs, util.CanonicalAddr(domain, pxy.serverCfg.TCPMuxHTTPConnectPort)), nil
 }
@@ -55,14 +64,15 @@ func (pxy *TCPMuxProxy) httpConnectRun() (remoteAddr string, err error) {
 			continue
 		}
 
-		addrs, err = pxy.httpConnectListen(domain, addrs)
+		addrs, err = pxy.httpConnectListen(domain, pxy.cfg.RouteByHTTPUser, pxy.cfg.HTTPUser, pxy.cfg.HTTPPwd, addrs)
 		if err != nil {
 			return "", err
 		}
 	}
 
 	if pxy.cfg.SubDomain != "" {
-		addrs, err = pxy.httpConnectListen(pxy.cfg.SubDomain+"."+pxy.serverCfg.SubDomainHost, addrs)
+		addrs, err = pxy.httpConnectListen(pxy.cfg.SubDomain+"."+pxy.serverCfg.SubDomainHost,
+			pxy.cfg.RouteByHTTPUser, pxy.cfg.HTTPUser, pxy.cfg.HTTPPwd, addrs)
 		if err != nil {
 			return "", err
 		}
@@ -89,6 +99,10 @@ func (pxy *TCPMuxProxy) Run() (remoteAddr string, err error) {
 
 func (pxy *TCPMuxProxy) GetConf() config.ProxyConf {
 	return pxy.cfg
+}
+
+func (pxy *TCPMuxProxy) GetLimiter() *rate.Limiter {
+	return pxy.limiter
 }
 
 func (pxy *TCPMuxProxy) Close() {

@@ -86,7 +86,8 @@ func NewHTTP2HTTPSPlugin(params map[string]string) (Plugin, error) {
 	}
 
 	p.s = &http.Server{
-		Handler: rp,
+		Handler:           rp,
+		ReadHeaderTimeout: 0,
 	}
 
 	go p.s.Serve(listener)

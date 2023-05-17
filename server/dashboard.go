@@ -15,6 +15,7 @@
 package server
 
 import (
+	"crypto/tls"
 	"net"
 	"net/http"
 	"time"
@@ -66,12 +67,20 @@ func (svr *Service) RunDashboardServer(address string) (err error) {
 		ReadTimeout:  httpServerReadTimeout,
 		WriteTimeout: httpServerWriteTimeout,
 	}
-	if address == "" || address == ":" {
-		address = ":http"
-	}
 	ln, err := net.Listen("tcp", address)
 	if err != nil {
 		return err
+	}
+
+	if svr.cfg.DashboardTLSMode {
+		cert, err := tls.LoadX509KeyPair(svr.cfg.DashboardTLSCertFile, svr.cfg.DashboardTLSKeyFile)
+		if err != nil {
+			return err
+		}
+		tlsCfg := &tls.Config{
+			Certificates: []tls.Certificate{cert},
+		}
+		ln = tls.NewListener(ln, tlsCfg)
 	}
 
 	go server.Serve(ln)

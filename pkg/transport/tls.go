@@ -61,7 +61,7 @@ func newCertPool(caPath string) (*x509.CertPool, error) {
 }
 
 func NewServerTLSConfig(certPath, keyPath, caPath string) (*tls.Config, error) {
-	var base = &tls.Config{}
+	base := &tls.Config{}
 
 	if certPath == "" || keyPath == "" {
 		// server will generate tls conf by itself
@@ -90,7 +90,7 @@ func NewServerTLSConfig(certPath, keyPath, caPath string) (*tls.Config, error) {
 }
 
 func NewClientTLSConfig(certPath, keyPath, caPath, serverName string) (*tls.Config, error) {
-	var base = &tls.Config{}
+	base := &tls.Config{}
 
 	if certPath == "" || keyPath == "" {
 		// client will not generate tls conf by itself

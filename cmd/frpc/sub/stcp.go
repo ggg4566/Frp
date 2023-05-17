@@ -18,10 +18,10 @@ import (
 	"fmt"
 	"os"
 
+	"github.com/spf13/cobra"
+
 	"frp/pkg/config"
 	"frp/pkg/consts"
-
-	"github.com/spf13/cobra"
 )
 
 func init() {
@@ -37,6 +37,8 @@ func init() {
 	stcpCmd.PersistentFlags().IntVarP(&bindPort, "bind_port", "", 0, "bind port")
 	stcpCmd.PersistentFlags().BoolVarP(&useEncryption, "ue", "", false, "use encryption")
 	stcpCmd.PersistentFlags().BoolVarP(&useCompression, "uc", "", false, "use compression")
+	stcpCmd.PersistentFlags().StringVarP(&bandwidthLimit, "bandwidth_limit", "", "", "bandwidth limit")
+	stcpCmd.PersistentFlags().StringVarP(&bandwidthLimitMode, "bandwidth_limit_mode", "", config.BandwidthLimitModeClient, "bandwidth limit mode")
 
 	rootCmd.AddCommand(stcpCmd)
 }
@@ -59,7 +61,8 @@ var stcpCmd = &cobra.Command{
 			prefix = user + "."
 		}
 
-		if role == "server" {
+		switch role {
+		case "server":
 			cfg := &config.STCPProxyConf{}
 			cfg.ProxyName = prefix + proxyName
 			cfg.ProxyType = consts.STCPProxy
@@ -69,13 +72,19 @@ var stcpCmd = &cobra.Command{
 			cfg.Sk = sk
 			cfg.LocalIP = localIP
 			cfg.LocalPort = localPort
+			cfg.BandwidthLimit, err = config.NewBandwidthQuantity(bandwidthLimit)
+			if err != nil {
+				fmt.Println(err)
+				os.Exit(1)
+			}
+			cfg.BandwidthLimitMode = bandwidthLimitMode
 			err = cfg.CheckForCli()
 			if err != nil {
 				fmt.Println(err)
 				os.Exit(1)
 			}
 			proxyConfs[cfg.ProxyName] = cfg
-		} else if role == "visitor" {
+		case "visitor":
 			cfg := &config.STCPVisitorConf{}
 			cfg.ProxyName = prefix + proxyName
 			cfg.ProxyType = consts.STCPProxy
@@ -92,7 +101,7 @@ var stcpCmd = &cobra.Command{
 				os.Exit(1)
 			}
 			visitorConfs[cfg.ProxyName] = cfg
-		} else {
+		default:
 			fmt.Println("invalid role")
 			os.Exit(1)
 		}

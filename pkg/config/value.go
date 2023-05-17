@@ -23,9 +23,7 @@ import (
 	"frp/pkg/util/util"
 )
 
-var (
-	glbEnvs map[string]string
-)
+var glbEnvs map[string]string
 
 func init() {
 	glbEnvs = make(map[string]string)
@@ -69,7 +67,7 @@ func RenderContent(in []byte) (out []byte, err error) {
 func GetRenderedConfFromFile(Path string) (out []byte, err error) {
 	var buf []byte
 	if strings.Contains(Path, "://") {
-		buf, err = util.HTTP("GET", Path, map[string]string{"User-Agent": ""}, nil)
+		buf, err = util.HTTPRequest("GET", Path, map[string]string{"User-Agent": ""}, nil)
 		if err != nil {
 			return
 		}
