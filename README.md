@@ -6,7 +6,7 @@
 
 1. 删除 Admin UI 模块
 2. `-c` 参数支持HTTP远程加载
-3. 添加 `del_enable` 自删除文件
+3. 添加 `del_enable` 自删除配置
 4. 添加 `crypto_salt` 默认: `frp`
 5. 添加 `websocket_host` 域前置
 6. 添加 `dingding_token` 钉钉通知
