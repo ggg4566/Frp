@@ -21,13 +21,13 @@ import (
 	"sync"
 	"time"
 
-	"github.com/fatedier/golib/crypto"
-	"github.com/fatedier/golib/errors"
-	"github.com/fatedier/golib/pool"
-
 	"frp/pkg/msg"
 	"frp/pkg/util/log"
 	"frp/pkg/util/util"
+
+	"github.com/fatedier/golib/pool"
+	"github.com/fatedier/golib/errors"
+	"github.com/fatedier/golib/crypto"
 )
 
 // NatHoleTimeout seconds.

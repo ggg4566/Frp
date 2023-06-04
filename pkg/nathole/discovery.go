@@ -19,9 +19,9 @@ import (
 	"net"
 	"time"
 
-	"github.com/pion/stun"
-
 	"frp/pkg/msg"
+
+	"github.com/pion/stun"
 )
 
 var responseTimeout = 3 * time.Second
